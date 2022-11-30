@@ -80,7 +80,7 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N)
 
 
 	TArray<UMaterialExpression*> FinalExpressions;
-
+	float default_radius_offset = 0.1f;
 	// Loop CircleCount times and create that many node sequences
 	for (int32 C_Index = 0; C_Index < Circle_N; ++C_Index)
 	{
@@ -123,7 +123,7 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N)
 		InverseRotationSpeed->ParameterName = IndexedParamName("InverseRotationSpeed", C_Index);
 		RotationDirection->ParameterName = IndexedParamName("RotationDirection", C_Index);
 
-		Radius->DefaultValue = 0.1;
+		Radius->DefaultValue = 0.1f + C_Index / 10.f;
 		Thickness->DefaultValue = 0.1;
 		Density->DefaultValue = 100.f;
 
@@ -240,8 +240,8 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N)
 
 		AddNodes.Add(AddNode);
 	}
-
-	UnrealMaterial->BaseColor.Expression = AddNodes.Last();
+	
+	UnrealMaterial->EmissiveColor.Expression = AddNodes.Last();
 
 	//////////////////////////////////////////
     // Final change notifies and state sets
