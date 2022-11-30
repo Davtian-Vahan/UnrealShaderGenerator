@@ -17,11 +17,8 @@ class SHADERTESTPROJECT_API UShaderScripts : public UAssetActionUtility
 protected:
 
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Gazan funkcianer")
-	void GenerateCirclesShader(const int32 CircleCount);
+	void GenerateCirclesShader(const int32 CircleCount, const FString MaterialName = "M_GenMaterial");
 
 	FName IndexedParamName(const FName ParamName, const int32 Index);
 	FName IndexedGroupName(const int32 Index);
-
-	// Cached material function refs
-	TArray<UMaterialFunction*> M_Functions;
 };
