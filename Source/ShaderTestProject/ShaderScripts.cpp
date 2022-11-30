@@ -15,6 +15,9 @@
 #include <Materials/MaterialExpressionSubtract.h>
 #include <Materials/MaterialExpressionMultiply.h>
 #include <Materials/MaterialExpressionDivide.h>
+#include <Materials/MaterialExpressionStaticBoolParameter.h>
+#include <Materials/MaterialExpressionStaticSwitchParameter.h>
+#include <Materials/MaterialExpressionTime.h>
 #include <AssetRegistry/AssetRegistryModule.h>
 #include <FileHelpers.h>
 
@@ -27,6 +30,8 @@
 #define T_ADD_NODE	     UMaterialExpressionAdd
 #define T_DIVIDE_NODE	 UMaterialExpressionDivide
 #define T_CONST_1D_NODE	 UMaterialExpressionConstant
+#define T_SWITCH_NODE    UMaterialExpressionStaticSwitchParameter
+#define T_TIME_NODE      UMaterialExpressionTime 
 
 /* 
 	Simplify allocation calls. NOTE: Macros assume your material variable name is _GenMaterial 
@@ -46,12 +51,14 @@
 														   
 #define MAKE_SC_PARAM(_VarName, _ParamName, _Index) ALLOC_EXPR_P(T_SC_PARAM, _VarName, _ParamName, _Index)
 #define MAKE_VR_PARAM(_VarName, _ParamName, _Index) ALLOC_EXPR_P(T_VC_PARAM, _VarName, _ParamName, _Index)
+#define MAKE_SWITCH(_VarName, _ParamName, _Index)   ALLOC_EXPR_P(T_SWITCH_NODE, _VarName, _ParamName, _Index)
 #define MAKE_CALLABLE(_Callable)					ALLOC_EXPR(T_CALLABLE_NODE, _Callable)
 #define MAKE_ADD(_VarName)						    ALLOC_EXPR(T_ADD_NODE, _VarName)
 #define MAKE_SUBTRACT(_VarName)						ALLOC_EXPR(T_SUBTRACT_NODE, _VarName)
 #define MAKE_MULTIPLY(_VarName)					    ALLOC_EXPR(T_MULTIPLY_NODE, _VarName)
 #define MAKE_DIVIDE(_VarName)					    ALLOC_EXPR(T_DIVIDE_NODE, _VarName)
 #define MAKE_CONST_1D(_VarName)					    ALLOC_EXPR(T_CONST_1D_NODE, _VarName)
+#define MAKE_TIME(_VarName)					        ALLOC_EXPR(T_TIME_NODE, _VarName)
 
 void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString MaterialName)
 {
@@ -106,27 +113,36 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 		MAKE_SC_PARAM(Opacity, "Opacity", C_Index);
 
 		// Segment related parameters
-		MAKE_SC_PARAM(bIsSegmented, "bIsSegmented", C_Index);
+		MAKE_SWITCH(bIsSegmented, "bIsSegmented", C_Index);
 		MAKE_SC_PARAM(SegmentCount, "SegmentCount", C_Index);
 		MAKE_SC_PARAM(SegmentSpacing, "SegmentSpacing", C_Index);
 		MAKE_VR_PARAM(CenterOffset, "CenterOffset", C_Index);
 
 		// Rotation related parameters
-		MAKE_SC_PARAM(bAutoRotates, "bAutoRotates", C_Index);
+		MAKE_SWITCH(bAutoRotates, "bAutoRotates", C_Index);
 		MAKE_SC_PARAM(InverseRotationSpeed, "InverseRotationSpeed", C_Index);
 		MAKE_SC_PARAM(RotationDirection, "RotationDirection", C_Index);
+
+		// Timer
+		MAKE_TIME(SineTime);
 
 		// Allocate function call nodes
 		MAKE_CALLABLE(RadialGradientCall1);
 		MAKE_CALLABLE(RadialGradientCall2);
+		MAKE_CALLABLE(RadialSegmentsCall);
 
 		// Allocate math operation nodes
 		MAKE_SUBTRACT(RadialsSubtract);
-		MAKE_MULTIPLY(RotationMultiply);
 		MAKE_DIVIDE(ThickDivide);
 		MAKE_SUBTRACT(ThickSubtract);
 		MAKE_CONST_1D(ThickCoeff);
+		//MAKE_CONST_1D(ZeroExpress);
+		MAKE_CONST_1D(OneExpress);
 		MAKE_MULTIPLY(OpacityMultiply);
+		MAKE_MULTIPLY(FinalMultiply);
+		//
+		MAKE_DIVIDE(RotSpeedDivide);
+		MAKE_MULTIPLY(RotDirMultiply);
 
 		// Set default values for some of the scalar params
 		Radius->DefaultValue = 0.1f + C_Index / 10.f;
@@ -134,10 +150,20 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 		Density->DefaultValue = 100.f;
 		Opacity->DefaultValue = 1.f;
 		ThickCoeff->R = 10.f;
+		OneExpress->R = 1.f;
+
+		bIsSegmented->DefaultValue = false;
+		bAutoRotates->DefaultValue = false;
+		SegmentCount->DefaultValue = 1.f;
+		SegmentSpacing->DefaultValue = 0.5f;
+		InverseRotationSpeed->DefaultValue = 15.f;
+		RotationDirection->DefaultValue = 1.f;
+		CenterOffset->DefaultValue = FLinearColor(-0.5f, -0.5f, 0.f, 1.f);
 
 		// Setup gradient function calls
 		RadialGradientCall1->SetMaterialFunction(MF_RadialGradientExp);
 		RadialGradientCall2->SetMaterialFunction(MF_RadialGradientExp);
+		RadialSegmentsCall->SetMaterialFunction(MF_RadialSegments);
 
 		// Connect gradient function call nodes
 		Radius->ConnectExpression(RadialGradientCall1->GetInput(2), 0);
@@ -159,35 +185,47 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 		RadialsSubtract->ConnectExpression(OpacityMultiply->GetInput(0), 0);
 		Opacity->ConnectExpression(OpacityMultiply->GetInput(1), 0);
 
-		FinalExpressions.Add(OpacityMultiply);
+		// Make MF_RadialSegments Repeat (1) input
+		UMaterialExpression* RepeatInput = SegmentCount;
+		RepeatInput->ConnectExpression(RadialSegmentsCall->GetInput(1), 0);
 
+		// Make MF_RadialSegments CenterOffset (2) input
+		UMaterialExpression* CenterOffsetInput = CenterOffset;
+		CenterOffsetInput->ConnectExpression(RadialSegmentsCall->GetInput(2), 0);
 
-		/*
-			Connect segmentation and rotation nodes
-		*/
-		//SegmentCount->ConnectExpression(RadialSegmentsCall->GetInput(1), 0);
-		//CenterOffset->ConnectExpression(RadialSegmentsCall->GetInput(2), 0);
-		//SegmentSpacing->ConnectExpression(RadialSegmentsCall->GetInput(5), 0);
+		// Make MF_RadialSegments Rotation input
+		SineTime->ConnectExpression(RotSpeedDivide->GetInput(0), 0);
+		InverseRotationSpeed->ConnectExpression(RotSpeedDivide->GetInput(1), 0);
+		RotSpeedDivide->ConnectExpression(RotDirMultiply->GetInput(0), 0);
+		RotationDirection->ConnectExpression(RotDirMultiply->GetInput(1), 0);
+		RotDirMultiply->ConnectExpression(bAutoRotates->GetInput(0), 0);
+		OneExpress->ConnectExpression(bAutoRotates->GetInput(1), 0);
+		UMaterialExpression* RotationInput = bAutoRotates;
+		RotationInput->ConnectExpression(RadialSegmentsCall->GetInput(3), 0);
 
-		/*	InverseRotationSpeed->ConnectExpression(MultiplyRot->GetInput(0), 0);
-			RotationDirection->ConnectExpression(MultiplyRot->GetInput(1), 0);
-			MultiplyRot->ConnectExpression(RadialSegmentsCall->GetInput(1), 0);*/
+		// Make MF_RadialSegments SegmentSpacing input
+		UMaterialExpression* SegmentSpacingInput = SegmentSpacing;
+		SegmentSpacingInput->ConnectExpression(RadialSegmentsCall->GetInput(5), 0);
 
+		// Connect bAutoRotates to bIsSegmented switch
+		// if true
+		RadialSegmentsCall->ConnectExpression(bIsSegmented->GetInput(0), 0);
+		// if false
+		OneExpress->ConnectExpression(bIsSegmented->GetInput(1), 0);
 
-		// Test
-		//Subtract_Radials->ConnectExpression(UnrealMaterial->BaseColor.Expression->GetInput(0), 0);
-		//UnrealMaterial->BaseColor.Expression = Subtract_Radials;
+		// Finally multiply auto rotates with radial segments coeff
+		OpacityMultiply->ConnectExpression(FinalMultiply->GetInput(0), 0);
+		bIsSegmented->ConnectExpression(FinalMultiply->GetInput(1), 0);
+
+		FinalExpressions.Add(FinalMultiply);
 	}
 
-	//MAKE_ADD(AddNode, UnrealMaterial);
-
-
 	TArray<UMaterialExpression*> AddNodes;
-	for (int32 Iter = 0; Iter < Circle_N; ++Iter)
+	for (int32 Iter = 0; Iter < Circle_N && Circle_N > 1; ++Iter)
 	{
 		MAKE_ADD(AddNode);
 
-		if (AddNodes.IsEmpty())
+		if (AddNodes.IsEmpty() && FinalExpressions.Num() > 1)
 		{
 			UMaterialExpression* A = FinalExpressions[Iter];
 			UMaterialExpression* B = FinalExpressions[Iter + 1];
@@ -200,6 +238,7 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 		}
 
 		UMaterialExpression* A = FinalExpressions[Iter];
+		UMaterialExpression* B = (AddNodes.Num() > 1 ? AddNodes.Last() : AddNodes[0]);
 
 		AddNodes.Last()->ConnectExpression(AddNode->GetInput(0), 0);
 		A->ConnectExpression(AddNode->GetInput(1), 0);
@@ -207,7 +246,7 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 	}
 	
 	// Emissive color is "final color" for UI result output. Not really sure why??
-	_GenMaterial->EmissiveColor.Expression = AddNodes.Last();
+	_GenMaterial->EmissiveColor.Expression = (!AddNodes.IsEmpty() ? AddNodes.Last() : FinalExpressions[0]);
 
     // Final change notifies and state sets
 	_GenMaterial->MaterialDomain = EMaterialDomain::MD_UI;
