@@ -20,6 +20,8 @@
 #include <Materials/MaterialExpressionTime.h>
 #include <AssetRegistry/AssetRegistryModule.h>
 #include <FileHelpers.h>
+#include <Materials/MaterialInstanceDynamic.h>
+#include <UObject/SavePackage.h>
 
 // Simplify allocation types
 #define T_SC_PARAM UMaterialExpressionScalarParameter
@@ -66,13 +68,13 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 	FString MaterialBaseName = MaterialName;
 	FString PackageName = "/Game/ShaderUtil/ShaderGen/";
 	PackageName += MaterialBaseName;
-	UPackage* Package = CreatePackage(NULL, *PackageName);
+	UPackage* Package = CreatePackage(nullptr, *PackageName);
 
 	// Create and setup generated material asset 
 	UMaterialFactoryNew* MaterialFactory = NewObject<UMaterialFactoryNew>();
 	UObject* RawMaterial = MaterialFactory->FactoryCreateNew(UMaterial::StaticClass(), Package,
 															 *MaterialBaseName, RF_Standalone | RF_Public,
-														      NULL, GWarn);
+															nullptr, GWarn);
 	// NOTE: Var name is macro specific, exercise caution when changing it.
 	UMaterial* _GenMaterial = Cast<UMaterial>(RawMaterial); 
 	FAssetRegistryModule::AssetCreated(_GenMaterial);
@@ -208,9 +210,8 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 		SegmentSpacingInput->ConnectExpression(RadialSegmentsCall->GetInput(5), 0);
 
 		// Connect bAutoRotates to bIsSegmented switch
-		// if true
+		// if false // if true 
 		RadialSegmentsCall->ConnectExpression(bIsSegmented->GetInput(0), 0);
-		// if false
 		OneExpress->ConnectExpression(bIsSegmented->GetInput(1), 0);
 
 		// Finally multiply auto rotates with radial segments coeff
@@ -250,8 +251,23 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 
     // Final change notifies and state sets
 	_GenMaterial->MaterialDomain = EMaterialDomain::MD_UI;
-	_GenMaterial->PreEditChange(NULL);
+	_GenMaterial->PreEditChange(nullptr);
 	_GenMaterial->PostEditChange();
+
+	//// Create a material instance based on the generated material
+	//UMaterialInstanceDynamic* _GenMaterialInstance = UMaterialInstanceDynamic::Create(_GenMaterial, this);
+
+	//// Package details
+	//FString MI_PackageName = PackageName + "_Instance";
+	//UPackage* MI_Package = CreatePackage(nullptr, *MI_PackageName);
+	//MI_Package->FullyLoad();
+
+	//_GenMaterialInstance->UpdateCachedData();
+	//MI_Package->MarkPackageDirty();
+	//FAssetRegistryModule::AssetCreated(_GenMaterialInstance);
+	//FString PackageFileName = FPackageName::LongPackageNameToFilename(MI_PackageName, FPackageName::GetAssetPackageExtension());
+	//// Save the asset
+	//UPackage::SavePackage(MI_Package, _GenMaterialInstance, EObjectFlags::RF_Public | EObjectFlags::RF_Standalone, *PackageFileName, GError, nullptr, true, true, SAVE_NoError);
 }
 
 FName UShaderScripts::IndexedParamName(const FName ParamName, const int32 Index)
