@@ -151,7 +151,7 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 		Thickness->DefaultValue = 0.1;
 		Density->DefaultValue = 100.f;
 		Opacity->DefaultValue = 1.f;
-		ThickCoeff->R = 10.f;
+		ThickCoeff->R = 1000.f;
 		OneExpress->R = 1.f;
 
 		bIsSegmented->DefaultValue = false;
