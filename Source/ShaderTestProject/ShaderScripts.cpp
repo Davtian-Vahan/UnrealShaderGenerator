@@ -22,6 +22,10 @@
 #include <FileHelpers.h>
 #include <Materials/MaterialInstanceDynamic.h>
 #include <UObject/SavePackage.h>
+#include "MaterialGraph/MaterialGraph.h"
+#include <Materials/Material.h>
+#include <Runtime/Launch/Resources/Version.h>
+
 
 // Simplify allocation types
 #define T_SC_PARAM UMaterialExpressionScalarParameter
@@ -35,22 +39,35 @@
 #define T_SWITCH_NODE    UMaterialExpressionStaticSwitchParameter
 #define T_TIME_NODE      UMaterialExpressionTime 
 
-/* 
-	Simplify allocation calls. NOTE: Macros assume your material variable name is _GenMaterial 
+/*
+	Simplify allocation calls. NOTE: Macros assume your material variable name is _GenMaterial
 	ALLOC_EXPR: Given type and variable name, dynamically creates the desired class instance.
-	ALLOC_EXPR_P: A fully automated macro that creates, names, groups, and adds the 
+	ALLOC_EXPR_P: A fully automated macro that creates, names, groups, and adds the
 				  parameter expression to the material graph.
 */
 
+
+#if ENGINE_MINOR_VERSION < 1 && WITH_EDITOR
+
+#define ADD_EXPR_PARAM(_VarName) _GenMaterial->Expressions.Add(_VarName); \
+
+#endif
+
+#if ENGINE_MINOR_VERSION >= 1 && WITH_EDITOR
+
+#define ADD_EXPR_PARAM(_VarName) _GenMaterial->AddExpressionParameter(_VarName, _GenMaterial->EditorParameters);
+
+#endif
+
 #define ALLOC_EXPR(_Type, _VarName)  _Type * _VarName = NewObject<_Type>(_GenMaterial);\
-									 _GenMaterial->Expressions.Add(_VarName);\
+									 ADD_EXPR_PARAM(_VarName);\
 
 #define ALLOC_EXPR_P(_Type, _VarName, _ParamName, _Index)  \
 															_Type * _VarName = NewObject<_Type>(_GenMaterial);\
 															_VarName->ParameterName = IndexedParamName(_ParamName, C_Index);\
 															_VarName->Group = IndexedGroupName(C_Index);\
-														    _GenMaterial->Expressions.Add(_VarName);\
-														   
+														    ADD_EXPR_PARAM(_VarName); \
+
 #define MAKE_SC_PARAM(_VarName, _ParamName, _Index) ALLOC_EXPR_P(T_SC_PARAM, _VarName, _ParamName, _Index)
 #define MAKE_VR_PARAM(_VarName, _ParamName, _Index) ALLOC_EXPR_P(T_VC_PARAM, _VarName, _ParamName, _Index)
 #define MAKE_SWITCH(_VarName, _ParamName, _Index)   ALLOC_EXPR_P(T_SWITCH_NODE, _VarName, _ParamName, _Index)
@@ -73,10 +90,10 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 	// Create and setup generated material asset 
 	UMaterialFactoryNew* MaterialFactory = NewObject<UMaterialFactoryNew>();
 	UObject* RawMaterial = MaterialFactory->FactoryCreateNew(UMaterial::StaticClass(), Package,
-															 *MaterialBaseName, RF_Standalone | RF_Public,
-															nullptr, GWarn);
+		*MaterialBaseName, RF_Standalone | RF_Public,
+		nullptr, GWarn);
 	// NOTE: Var name is macro specific, exercise caution when changing it.
-	UMaterial* _GenMaterial = Cast<UMaterial>(RawMaterial); 
+	UMaterial* _GenMaterial = Cast<UMaterial>(RawMaterial);
 	FAssetRegistryModule::AssetCreated(_GenMaterial);
 	Package->FullyLoad();
 	Package->SetDirtyFlag(true);
@@ -96,7 +113,7 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 	if (!MF_RadialSegments || !MF_SegmentedRotation || !MF_RadialGradientExp)
 	{
 		UE_LOG(LogTemp, Error, TEXT("UShaderScripts::GenerateCirclesShader:"
-			                        "Failed to load one or more material functions.")); 
+			"Failed to load one or more material functions."));
 		return;
 	}
 
@@ -109,8 +126,8 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 	for (int32 C_Index = 0; C_Index < Circle_N; ++C_Index)
 	{
 		// Create and setup scalar parameters
-		MAKE_SC_PARAM(Radius,  "Radius", C_Index);
-		MAKE_SC_PARAM(Thickness,"Thickness", C_Index);
+		MAKE_SC_PARAM(Radius, "Radius", C_Index);
+		MAKE_SC_PARAM(Thickness, "Thickness", C_Index);
 		MAKE_SC_PARAM(Density, "Density", C_Index);
 		MAKE_SC_PARAM(Opacity, "Opacity", C_Index);
 
@@ -245,11 +262,13 @@ void UShaderScripts::GenerateCirclesShader(const int32 Circle_N, const FString M
 		A->ConnectExpression(AddNode->GetInput(1), 0);
 		AddNodes.Add(AddNode);
 	}
-	
-	// Emissive color is "final color" for UI result output. Not really sure why??
-	_GenMaterial->EmissiveColor.Expression = (!AddNodes.IsEmpty() ? AddNodes.Last() : FinalExpressions[0]);
 
-    // Final change notifies and state sets
+	// Emissive color is "final color" for UI result output. Not really sure why??
+	UMaterialExpression* FinalNode_ToOutput = (!AddNodes.IsEmpty() ? AddNodes.Last() : FinalExpressions[0]);
+
+	FinalNode_ToOutput->ConnectExpression(_GenMaterial->GetExpressionInputForProperty(MP_EmissiveColor), 0);
+
+	// Final change notifies and state sets
 	_GenMaterial->MaterialDomain = EMaterialDomain::MD_UI;
 	_GenMaterial->PreEditChange(nullptr);
 	_GenMaterial->PostEditChange();
